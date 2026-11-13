@@ -70,6 +70,17 @@ uv run python src/main.py
 - 未レビューのオープン PR・直近マージされた PR は、モーダルを開いたときだけ取り直す
 - 画面を開いていない間は GitHub に問い合わせない
 
+### ログイン時に自動起動する (macOS)
+
+```bash
+scripts/launch-agent.sh install    # 登録して起動。再実行すると登録し直す
+scripts/launch-agent.sh status     # 起動状態を表示
+scripts/launch-agent.sh uninstall  # 停止して登録を外す
+scripts/launch-agent.sh --help     # 使い方を表示
+```
+
+`~/Library/LaunchAgents/local.review-board.plist` を作り、ログイン時に起動、落ちたら再起動する。実行時の `uv` と `gh` の場所を plist に書き込むので、どちらかを入れ直して場所が変わったら `install` をやり直す。リポジトリを移動したときも同じ。ログは `~/Library/Logs/review-board.log`。
+
 ### アプリとして Dock に置く (Chrome)
 
 1. Chrome で `http://127.0.0.1:8765/` を開く
