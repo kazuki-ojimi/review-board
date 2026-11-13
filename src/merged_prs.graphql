@@ -1,0 +1,19 @@
+query MergedPullRequests($q: String!, $limit: Int!) {
+  search(query: $q, type: ISSUE, first: $limit) {
+    issueCount
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        mergedAt
+        author {
+          login
+        }
+        repository {
+          nameWithOwner
+        }
+      }
+    }
+  }
+}

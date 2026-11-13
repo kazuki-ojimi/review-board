@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review Board</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#1f2937">
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1f2328; --muted: #656d76; --line: #d8dee4; --card: #fff;
+    --action: #c2410c; --action-bg: #fff1e6; --wait: #57606a; --wait-bg: #eef1f4;
+    --link: #0969da; --error-bg: #ffebe9; --ok: #1a7f37;
+    --ok-bg: #dafbe1; --muted-row: #f6f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --line: #30363d; --card: #161b22;
+      --action: #ffa657; --action-bg: #3d2410; --wait: #8d96a0; --wait-bg: #21262d;
+      --link: #58a6ff; --error-bg: #3c1618; --ok: #3fb950;
+      --ok-bg: #12261e; --muted-row: #0d1117;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 16px; margin: 28px 0 8px; }
+  .meta { color: var(--muted); font-size: 12px; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card); color: var(--fg); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .error { background: var(--error-bg); padding: 8px 12px; border-radius: 6px; margin: 8px 0; }
+  .warn { color: var(--action); font-size: 12px; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr.action td:first-child { box-shadow: inset 3px 0 var(--action); }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .repo { color: var(--muted); font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+  .badge.action { background: var(--action-bg); color: var(--action); font-weight: 600; }
+  .badge.wait { background: var(--wait-bg); color: var(--wait); }
+  .num { white-space: nowrap; }
+  .empty { color: var(--muted); padding: 12px; }
+  .wrap { overflow-x: auto; }
+  .toggle { display: inline-block; margin-bottom: 8px; cursor: pointer; }
+  .badge.draft { border: 1px dashed var(--muted); color: var(--muted); }
+  .badge.approved { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+  tr.muted td { background: var(--muted-row); }
+  tr.muted td:not(:first-child) { opacity: .6; }
+  td.done { color: var(--ok); }
+  td.open { color: var(--action); font-weight: 600; }
+  dialog { width: min(1100px, 92vw); max-height: 85vh; padding: 0; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg); color: var(--fg); }
+  dialog::backdrop { background: rgb(0 0 0 / .4); }
+  .dialog-head { position: sticky; top: 0; display: flex; align-items: baseline; gap: 12px;
+    padding: 12px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .dialog-head h2 { margin: 0; }
+  .dialog-head button { margin-left: auto; }
+  .dialog-body { padding: 12px 16px; }
+  tr.day td { background: var(--muted-row); font-weight: 600; padding-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Review Board</h1>
+  <span class="meta" id="meta">読み込み中…</span>
+  <button id="refresh" type="button">今すぐ更新</button>
+  <button id="open-unreviewed" type="button">未レビューのオープン PR<span id="unreviewed-total"></span></button>
+  <button id="open-merged" type="button">直近マージされた PR</button>
+</header>
+<div id="error"></div>
+
+<h2>自分が出した PR <span class="meta" id="authored-count"></span></h2>
+<div class="wrap" id="authored"></div>
+
+<h2>レビューした PR <span class="meta" id="reviewed-count"></span></h2>
+<label class="meta toggle"><input type="checkbox" id="show-approved"> 自分が承認した PR も表示 (<span id="approved-count">0</span> 件)</label>
+<div class="wrap" id="reviewed"></div>
+
+<dialog id="unreviewed-dialog">
+  <div class="dialog-head">
+    <h2>未レビューのオープン PR</h2>
+    <span class="meta" id="unreviewed-count"></span>
+    <button type="button" data-close>閉じる</button>
+  </div>
+  <div class="dialog-body">
+    <div class="meta">自分が貢献したリポジトリのオープン PR のうち、自分の PR・レビュー済みを除いたもの。最終コミット (無ければ作成) の新しい順で、下書きは最後</div>
+    <div class="wrap" id="unreviewed"></div>
+  </div>
+</dialog>
+
+<dialog id="merged-dialog">
+  <div class="dialog-head">
+    <h2>直近マージされた PR</h2>
+    <span class="meta" id="merged-count"></span>
+    <button type="button" data-close>閉じる</button>
+  </div>
+  <div class="dialog-body">
+    <div class="meta">自分が貢献したリポジトリで、マージされた PR。マージの新しい順</div>
+    <div class="wrap" id="merged"></div>
+  </div>
+</dialog>
+
+<script>
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const DECISION = { APPROVED: "承認", CHANGES_REQUESTED: "変更要求", REVIEW_REQUIRED: "レビュー待ち", DISMISSED: "取り消し" };
+
+function decisionLabel(value) {
+  return esc(DECISION[value] ?? "-");
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function ago(iso) {
+  if (!iso) return "";
+  // Commit times come from the committer's clock and can be in the future.
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  if (min < 60) return `${min} 分前`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} 時間前`;
+  return `${Math.round(h / 24)} 日前`;
+}
+
+function prCell(r) {
+  return `<div class="repo">${esc(r.repo)}#${r.number}</div><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>`;
+}
+
+function authorCell(r) {
+  return `<td class="num">${esc(r.author ?? "(unknown user)")}</td>`;
+}
+
+function isApprovedByMe(r) {
+  return r.myDecision === "APPROVED";
+}
+
+// The server already excludes drafts and PRs the viewer approved.
+function isAction(r) {
+  return Boolean(r.needsAction);
+}
+
+let showApproved = false;
+let lastBody = null;
+
+function statusCell(r, actionLabel, waitLabel) {
+  if (r.isDraft) return '<span class="badge draft">下書き</span>';
+  if (isApprovedByMe(r)) return '<span class="badge approved">承認済み</span>';
+  return isAction(r) ? `<span class="badge action">${actionLabel}</span>` : `<span class="badge wait">${waitLabel}</span>`;
+}
+
+function rowClass(r) {
+  if (r.isDraft || isApprovedByMe(r)) return "muted";
+  return isAction(r) ? "action" : "";
+}
+
+function threadClass(r) {
+  if (!r.myThreads) return "meta";
+  return r.myThreadsResolved === r.myThreads ? "done" : "open";
+}
+
+function activityCell(r) {
+  if (!r.newCount) return '<span class="meta">-</span>';
+  return `<span class="num">${r.newCount} 件 (${esc(ago(r.lastNewAt))})</span><div class="meta">${r.newActors.map(esc).join(", ")}</div>`;
+}
+
+function table(headers, rows) {
+  if (!rows.length) return '<div class="empty">該当なし</div>';
+  const head = headers.map(h => `<th>${h}</th>`).join("");
+  return `<table><thead><tr>${head}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+}
+
+function renderAuthored(rows) {
+  return table(["状態", "PR", "新規コメント", "スレッド (未返信/未解決)", "判定", "更新"], rows.map(r => `
+    <tr class="${rowClass(r)}">
+      <td>${statusCell(r, "要対応", "待ち")}</td>
+      <td>${prCell(r)}</td>
+      <td>${activityCell(r)}</td>
+      <td class="num">${r.unresolvedThreads ? `${r.unansweredThreads} / ${r.unresolvedThreads}` : '<span class="meta">-</span>'}</td>
+      <td class="num">${decisionLabel(r.reviewDecision)}</td>
+      <td class="num meta">${esc(ago(r.updatedAt))}</td>
+    </tr>`));
+}
+
+function renderReviewed(rows) {
+  return table(["状態", "PR", "作者", "返信", "自分のスレッド (解決済み/全体)", "判定 (自分 / PR 全体)", "更新"], rows.map(r => `
+    <tr class="${rowClass(r)}">
+      <td>${statusCell(r, "返信あり", "返信待ち")}</td>
+      <td>${prCell(r)}</td>
+      ${authorCell(r)}
+      <td>${activityCell(r)}</td>
+      <td class="num ${threadClass(r)}">${r.myThreadsResolved} / ${r.myThreads}</td>
+      <td class="num">自分: ${decisionLabel(r.myDecision)}<div class="meta">PR: ${decisionLabel(r.reviewDecision)}</div></td>
+      <td class="num meta">${esc(ago(r.updatedAt))}</td>
+    </tr>`));
+}
+
+function renderUnreviewed(rows) {
+  return table(["状態", "PR", "作者", "最終コミット", "判定", "作成"], rows.map(r => `
+    <tr class="${rowClass(r)}">
+      <td>${statusCell(r, "", "未レビュー")}</td>
+      <td>${prCell(r)}</td>
+      ${authorCell(r)}
+      <td class="num">${esc(ago(r.lastCommitAt))}</td>
+      <td class="num">${decisionLabel(r.reviewDecision)}</td>
+      <td class="num meta">${esc(ago(r.createdAt))}</td>
+    </tr>`));
+}
+
+function dayLabel(iso) {
+  return new Date(iso).toLocaleDateString([], { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+}
+
+const MERGED_HEADERS = ["マージ", "PR", "作者"];
+
+// Rows are newest first; a heading row starts each local calendar day.
+function renderMerged(rows) {
+  const perDay = new Map();
+  for (const r of rows) {
+    const label = dayLabel(r.mergedAt);
+    perDay.set(label, (perDay.get(label) ?? 0) + 1);
+  }
+  let day = null;
+  const html = [];
+  for (const r of rows) {
+    const label = dayLabel(r.mergedAt);
+    if (label !== day) {
+      day = label;
+      html.push(`<tr class="day"><td colspan="${MERGED_HEADERS.length}">${esc(label)} <span class="meta">${perDay.get(label)} 件</span></td></tr>`);
+    }
+    html.push(`
+    <tr>
+      <td class="num">${esc(new Date(r.mergedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</td>
+      <td>${prCell(r)}</td>
+      ${authorCell(r)}
+    </tr>`);
+  }
+  return table(MERGED_HEADERS, html);
+}
+
+// Lists shown in modals. Each is fetched only while its modal is opened.
+const MODALS = {
+  unreviewed: {
+    dialog: "unreviewed-dialog", path: "/api/unreviewed", target: "unreviewed", count: "unreviewed-count",
+    render: renderUnreviewed,
+    label: b => `${b.rows.length} 件`,
+    onLoad: b => { document.getElementById("unreviewed-total").textContent = ` (${b.total})`; },
+    last: null,
+    pending: null,
+  },
+  merged: {
+    dialog: "merged-dialog", path: "/api/merged", target: "merged", count: "merged-count",
+    render: renderMerged,
+    label: b => `直近 ${b.days} 日 (${esc(new Date(b.since).toLocaleString())} 以降) ${b.rows.length} 件`,
+    last: null,
+    pending: null,
+  },
+};
+
+function truncatedNote(total, shown) {
+  return total > shown ? `全 ${total} 件中 ${shown} 件のみ表示` : "";
+}
+
+function modalLabel(m, body, status) {
+  const notes = [];
+  const truncated = truncatedNote(body.total, body.rows.length);
+  if (truncated) notes.push(truncated);
+  if (body.reposTruncated) notes.push("対象リポジトリが取得上限を超え、一部のみ対象");
+  const warn = notes.length ? ` <span class="warn">${notes.join(" / ")}</span>` : "";
+  return `${m.label(body)}${warn} / 取得 ${esc(new Date(body.fetchedAt).toLocaleString())}${status ? ` / ${status}` : ""}`;
+}
+
+function showModalBody(m, body, status) {
+  m.last = body;
+  m.onLoad?.(body);
+  document.getElementById(m.target).innerHTML = m.render(body.rows);
+  document.getElementById(m.count).innerHTML = modalLabel(m, body, status);
+}
+
+function showModalError(m, message) {
+  const error = `<span class="warn">取得に失敗しました: ${esc(message)}</span>`;
+  if (m.last) {
+    document.getElementById(m.count).innerHTML = `${modalLabel(m, m.last, "")} / ${error}`;
+  } else {
+    document.getElementById(m.target).innerHTML = `<div class="error">取得に失敗しました: ${esc(message)}</div>`;
+  }
+}
+
+// On a non-OK response, throws with the JSON "error" field, or the HTTP status
+// when the body is not JSON.
+async function fetchApi(path, force) {
+  const res = await fetch(`${path}${force ? "?refresh=1" : ""}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  return body;
+}
+
+// Show what is already known at once, then replace it with fresh data.
+async function openModal(m) {
+  document.getElementById(m.dialog).showModal();
+  try {
+    if (!m.last) {
+      document.getElementById(m.target).innerHTML = '<div class="empty">読み込み中…</div>';
+      document.getElementById(m.count).textContent = "";
+      const body = await fetchApi(m.path, false);
+      showModalBody(m, body, body.cached ? "最新を取得中…" : "");
+      if (!body.cached) return;
+    } else {
+      showModalBody(m, m.last, "最新を取得中…");
+    }
+    // Reopening while a refresh is running waits for that refresh instead of
+    // starting another one.
+    m.pending ??= fetchApi(m.path, true).finally(() => { m.pending = null; });
+    showModalBody(m, await m.pending, "");
+  } catch (e) {
+    showModalError(m, e.message);
+  }
+}
+
+// `rows` are the rows shown; `fetched` is how many came from the search.
+function countLabel(rows, total, fetched = rows.length) {
+  const action = rows.filter(isAction).length;
+  const truncated = truncatedNote(total, fetched);
+  return `${rows.length} 件 / 要対応 ${action} 件${truncated ? ` <span class="warn">${truncated}</span>` : ""}`;
+}
+
+function render() {
+  const body = lastBody;
+  const approved = body.reviewed.filter(isApprovedByMe).length;
+  const reviewed = showApproved ? body.reviewed : body.reviewed.filter(r => !isApprovedByMe(r));
+  document.getElementById("authored").innerHTML = renderAuthored(body.authored);
+  document.getElementById("reviewed").innerHTML = renderReviewed(reviewed);
+  document.getElementById("authored-count").innerHTML = countLabel(body.authored, body.totals.authored);
+  document.getElementById("reviewed-count").innerHTML = countLabel(reviewed, body.totals.reviewed, body.reviewed.length);
+  document.getElementById("approved-count").textContent = approved;
+  const action = [...body.authored, ...body.reviewed].filter(isAction).length;
+  document.title = action ? `(${action}) Review Board` : "Review Board";
+}
+
+function showMeta(body, refreshing) {
+  const status = refreshing ? "最新を取得中…" : `${AUTO_REFRESH_MS / 60000} 分ごとに自動更新`;
+  document.getElementById("meta").textContent =
+    `${body.viewer} / 取得 ${new Date(body.fetchedAt).toLocaleString()} / ${status}`;
+}
+
+let inFlight = null;
+
+// Returns the response body, or null when the request failed. A call made while
+// another load is running shares that load's result.
+function load(force) {
+  inFlight ??= doLoad(force).finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function doLoad(force) {
+  const button = document.getElementById("refresh");
+  button.disabled = true;
+  if (force && lastBody) showMeta(lastBody, true);
+  try {
+    const body = await fetchApi("/api/prs", force);
+    document.getElementById("error").innerHTML = "";
+    lastBody = body;
+    render();
+    showMeta(body, false);
+    return body;
+  } catch (e) {
+    document.getElementById("error").innerHTML = `<div class="error">取得に失敗しました: ${esc(e.message)}</div>`;
+    if (lastBody) showMeta(lastBody, false);
+    else document.getElementById("meta").textContent = "";
+    return null;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// Show the server's cached board at once, then replace it with fresh data.
+async function start() {
+  const body = await load(false);
+  if (body?.cached) await load(true);
+}
+
+document.getElementById("refresh").addEventListener("click", () => load(true));
+document.getElementById("show-approved").addEventListener("change", e => {
+  showApproved = e.target.checked;
+  if (lastBody) render();
+});
+document.getElementById("open-merged").addEventListener("click", () => openModal(MODALS.merged));
+document.getElementById("open-unreviewed").addEventListener("click", () => openModal(MODALS.unreviewed));
+for (const button of document.querySelectorAll("[data-close]")) {
+  button.addEventListener("click", () => button.closest("dialog").close());
+}
+// A click on the backdrop targets the dialog itself but lands outside its box.
+for (const dialog of document.querySelectorAll("dialog")) {
+  dialog.addEventListener("click", e => {
+    if (e.target !== dialog) return;
+    const box = dialog.getBoundingClientRect();
+    const inside = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+    if (!inside) dialog.close();
+  });
+}
+start();
+setInterval(() => load(true), AUTO_REFRESH_MS);
+</script>
+</body>
+</html>
