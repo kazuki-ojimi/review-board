@@ -27,7 +27,7 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = [
     # ============================================================
-    # Must-have: All projects should enable these
+    # Must-have
     # ============================================================
     "F",    # Pyflakes: undefined names, unused imports, syntax errors
     "E",    # pycodestyle errors
@@ -41,7 +41,7 @@ select = [
     "T20",  # flake8-print: leftover print()
 
     # ============================================================
-    # Recommended: Low noise, broadly useful
+    # Recommended
     # ============================================================
     "C4",   # flake8-comprehensions: unnecessary list()/dict() wraps
     "SIM",  # flake8-simplify: simplifiable code patterns
@@ -54,8 +54,7 @@ select = [
     "ERA",  # eradicate: commented-out code detection
 
     # ============================================================
-    # Case-by-case: Enable/disable based on project needs
-    # Remove entire prefix or individual rules as needed
+    # Case-by-case
     # ============================================================
     # -- General purpose --
     "S",    # flake8-bandit: security checks
@@ -74,35 +73,21 @@ select = [
     "D",    # pydocstyle: docstring format and presence
     # -- Type hints --
     "TC",   # flake8-type-checking: TYPE_CHECKING block optimization
-    "FA",   # flake8-future-annotations (effective when target-version < py310)
     "ANN",  # flake8-annotations: type annotation enforcement
     # -- Testing (pytest) --
     "PT",   # flake8-pytest-style: pytest conventions
-    # -- Async --
-    "ASYNC", # flake8-async: blocking operations in async code
 
     # ============================================================
-    # Optional: Strict / opinionated — enable if team agrees
+    # Strict
     # ============================================================
     "FBT",  # flake8-boolean-trap: boolean positional arguments
     "C90",  # mccabe: function complexity threshold
     "SLF",  # flake8-self: private member access from outside
     "PL",   # Pylint: all PLC / PLE / PLR / PLW rules
-
-    # ============================================================
-    # Domain-specific: Remove if not applicable
-    # No-op when the framework is not used
-    # ============================================================
-    "PD",   # pandas-vet: pandas best practices
-    "NPY",  # NumPy-specific: deprecated functions/type aliases
-    "AIR",  # Airflow
-    "DJ",   # flake8-django
-    "FAST", # FastAPI
 ]
 
 ignore = [
     "E501",   # Line too long — handled by formatter
-    "E731",   # Allow lambda assignment
     # -- SIM --
     "SIM108", # Ternary operator — often less readable
     # -- ISC --
