@@ -4,8 +4,8 @@ from status import (
     my_decision,
     summarize_authored,
     summarize_merged,
-    summarize_reviewed,
-    summarize_unreviewed,
+    summarize_others,
+    summarize_reviewing,
 )
 
 ME = "me"
@@ -320,7 +320,7 @@ class TestSummarizeAuthored:
         assert summarize_authored(pr, ME)["newCount"] == 0
 
 
-class TestSummarizeReviewed:
+class TestSummarizeReviewing:
     def test_author_reply_after_my_review(self):
         pr = _pr(
             author=AUTHOR,
@@ -328,9 +328,10 @@ class TestSummarizeReviewed:
             comments=[_comment(AUTHOR, "2026-11-03T00:00:00Z")],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert row["needsAction"] is True
+        assert row["reviewRequested"] is False
         assert row["newActors"] == [AUTHOR]
 
     def test_new_actors_are_unique_and_sorted(self):
@@ -344,7 +345,7 @@ class TestSummarizeReviewed:
             commits=[_commit("aaron", "2026-11-05T00:00:00Z")],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         # Commits come after comments in the events, so this also checks sorting.
         assert (row["newCount"], row["newActors"]) == (3, ["aaron", "alice"])
@@ -356,7 +357,7 @@ class TestSummarizeReviewed:
             commits=[_commit(AUTHOR, "2026-11-03T00:00:00Z")],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is True
+        assert summarize_reviewing(pr, ME)["needsAction"] is True
 
     def test_other_reviewer_comment_is_not_a_reply(self):
         pr = _pr(
@@ -367,7 +368,7 @@ class TestSummarizeReviewed:
             comments=[_comment("bob", "2026-11-03T00:00:00Z")],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is False
+        assert summarize_reviewing(pr, ME)["needsAction"] is False
 
     def test_author_activity_before_my_review_is_not_a_reply(self):
         pr = _pr(
@@ -376,7 +377,7 @@ class TestSummarizeReviewed:
             reviews=[_review(ME, "2026-11-02T00:00:00Z", state="CHANGES_REQUESTED")],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert (row["newCount"], row["needsAction"]) == (0, False)
 
@@ -391,12 +392,12 @@ class TestSummarizeReviewed:
             ],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is True
+        assert summarize_reviewing(pr, ME)["needsAction"] is True
 
     def test_without_my_activity_nothing_is_a_reply(self):
         pr = _pr(author=AUTHOR, comments=[_comment(AUTHOR, "2026-11-03T00:00:00Z")])
 
-        assert summarize_reviewed(pr, ME)["newCount"] == 0
+        assert summarize_reviewing(pr, ME)["newCount"] == 0
 
     def test_draft_never_needs_action(self):
         pr = _pr(
@@ -406,7 +407,7 @@ class TestSummarizeReviewed:
             draft=True,
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert (row["newCount"], row["needsAction"]) == (1, False)
 
@@ -417,7 +418,7 @@ class TestSummarizeReviewed:
             comments=[_comment(AUTHOR, "2026-11-03T00:00:00Z", reacted=["THUMBS_UP"])],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is False
+        assert summarize_reviewing(pr, ME)["needsAction"] is False
 
     @pytest.mark.parametrize(
         "commit",
@@ -433,7 +434,7 @@ class TestSummarizeReviewed:
             commits=[commit],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert row["needsAction"] is True
         assert row["newActors"] == ["(unknown user)"]
@@ -449,7 +450,7 @@ class TestSummarizeReviewed:
             ],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is False
+        assert summarize_reviewing(pr, ME)["needsAction"] is False
 
     def test_deleted_author_comments_are_not_replies(self):
         pr = _pr(
@@ -458,7 +459,7 @@ class TestSummarizeReviewed:
             comments=[_comment(None, "2026-11-03T00:00:00Z")],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert row["needsAction"] is False
         assert row["author"] is None
@@ -470,7 +471,7 @@ class TestSummarizeReviewed:
             commits=[_commit("bob", "2026-11-03T00:00:00Z")],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is True
+        assert summarize_reviewing(pr, ME)["needsAction"] is True
 
     @pytest.mark.parametrize(
         ("comment_at", "expected"),
@@ -484,7 +485,7 @@ class TestSummarizeReviewed:
             comments=[_comment(AUTHOR, comment_at)],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is expected
+        assert summarize_reviewing(pr, ME)["needsAction"] is expected
 
     def test_reply_on_pr_i_approved_does_not_need_action(self):
         pr = _pr(
@@ -493,13 +494,27 @@ class TestSummarizeReviewed:
             comments=[_comment(AUTHOR, "2026-11-03T00:00:00Z")],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert (row["myDecision"], row["newCount"], row["needsAction"]) == (
             "APPROVED",
             1,
             False,
         )
+
+    def test_requested_review_needs_action_without_replies(self):
+        row = summarize_reviewing(_pr(author=AUTHOR), ME, requested=True)
+
+        assert (row["reviewRequested"], row["newCount"], row["needsAction"]) == (
+            True,
+            0,
+            True,
+        )
+
+    def test_requested_review_on_draft_does_not_need_action(self):
+        row = summarize_reviewing(_pr(author=AUTHOR, draft=True), ME, requested=True)
+
+        assert row["needsAction"] is False
 
     def test_reply_after_my_approval_was_dismissed_needs_action(self):
         pr = _pr(
@@ -508,7 +523,7 @@ class TestSummarizeReviewed:
             comments=[_comment(AUTHOR, "2026-11-03T00:00:00Z")],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert (row["myDecision"], row["needsAction"]) == ("DISMISSED", True)
 
@@ -518,7 +533,7 @@ class TestSummarizeReviewed:
             threads=[_thread(_comment(ME, "2026-11-02T00:00:00Z", state="PENDING"))],
         )
 
-        assert summarize_reviewed(pr, ME)["myThreads"] == 0
+        assert summarize_reviewing(pr, ME)["myThreads"] == 0
 
     def test_author_reply_in_resolved_thread_is_not_a_reply(self):
         pr = _pr(
@@ -532,7 +547,7 @@ class TestSummarizeReviewed:
             ],
         )
 
-        assert summarize_reviewed(pr, ME)["needsAction"] is False
+        assert summarize_reviewing(pr, ME)["needsAction"] is False
 
     def test_my_threads_resolved_and_total(self):
         pr = _pr(
@@ -548,7 +563,7 @@ class TestSummarizeReviewed:
             ],
         )
 
-        row = summarize_reviewed(pr, ME)
+        row = summarize_reviewing(pr, ME)
 
         assert row["myThreads"] == 3
         assert row["myThreadsResolved"] == 1
@@ -558,7 +573,7 @@ class TestSummarizeReviewed:
         thread["starter"] = {"nodes": []}
         pr = _pr(author=AUTHOR, threads=[thread])
 
-        assert summarize_reviewed(pr, ME)["myThreads"] == 0
+        assert summarize_reviewing(pr, ME)["myThreads"] == 0
 
 
 @pytest.mark.parametrize(
@@ -616,7 +631,7 @@ def _open_pr(number, *, draft=False, committed=None):
     }
 
 
-class TestSummarizeUnreviewed:
+class TestSummarizeOthers:
     def test_sorts_by_last_commit_with_drafts_last(self):
         search = {
             "issueCount": 4,
@@ -629,7 +644,7 @@ class TestSummarizeUnreviewed:
             ],
         }
 
-        rows = summarize_unreviewed(search)
+        rows = summarize_others(search)
 
         assert [r["number"] for r in rows] == [2, 4, 1, 3]
 
@@ -642,7 +657,7 @@ class TestSummarizeUnreviewed:
             ],
         }
 
-        rows = summarize_unreviewed(search)
+        rows = summarize_others(search)
 
         assert [r["number"] for r in rows] == [2, 1]
 

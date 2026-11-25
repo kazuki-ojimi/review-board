@@ -13,7 +13,7 @@ from main import (
     MemoryCache,
     build_board,
     build_merged,
-    build_unreviewed,
+    build_others,
     make_caches,
     make_handler,
 )
@@ -34,7 +34,7 @@ def test_memory_cache_fetches_only_when_empty_or_forced():
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("path", ["/api/unreviewed", "/api/merged"])
+@pytest.mark.parametrize("path", ["/api/others", "/api/merged"])
 def test_refreshing_a_modal_list_reuses_the_cached_board(monkeypatch, path):
     board_fetches = []
     monkeypatch.setattr(main, "fetch_activity", lambda: board_fetches.append(1) or {})
@@ -46,7 +46,7 @@ def test_refreshing_a_modal_list_reuses_the_cached_board(monkeypatch, path):
     searched = []
     empty = {"issueCount": 0, "nodes": []}
     monkeypatch.setattr(
-        main, "fetch_unreviewed", lambda repos: searched.append(repos) or empty
+        main, "fetch_others", lambda repos: searched.append(repos) or empty
     )
     monkeypatch.setattr(
         main, "fetch_merged", lambda repos, _since: searched.append(repos) or empty
@@ -148,6 +148,7 @@ def test_build_board_sorts_action_first_and_drafts_last():
             ],
         },
         "reviewed": {"issueCount": 0, "nodes": []},
+        "requested": {"issueCount": 0, "nodes": []},
     }
 
     board = build_board(data)
@@ -155,19 +156,20 @@ def test_build_board_sorts_action_first_and_drafts_last():
     # Drafts never need action, so they are ordered by update time only, and
     # stay below #1 even though they were updated later.
     assert [r["number"] for r in board["authored"]] == [3, 2, 1, 5, 4]
-    assert board["totals"] == {"authored": 5, "reviewed": 0}
+    assert board["totals"] == {"authored": 5, "reviewing": 0}
     assert board["reposTruncated"] is False
 
 
-def test_build_board_sorts_reviewed_rows_too(monkeypatch):
+def test_build_board_merges_reviewed_and_requested_rows_and_sorts_them(monkeypatch):
     monkeypatch.setattr(
         main,
-        "summarize_reviewed",
-        lambda pr, _viewer: {
+        "summarize_reviewing",
+        lambda pr, _viewer, requested=False: {
             "number": pr["number"],
             "isDraft": pr["isDraft"],
             "updatedAt": pr["updatedAt"],
-            "needsAction": pr["number"] == 1,
+            "needsAction": pr["number"] == 1 or requested,
+            "reviewRequested": requested,
         },
     )
     data = {
@@ -184,9 +186,21 @@ def test_build_board_sorts_reviewed_rows_too(monkeypatch):
                 _pr(1, needs_action=False, updated="2026-11-01T00:00:00Z"),
             ],
         },
+        "requested": {
+            "issueCount": 4,
+            "nodes": [_pr(3, needs_action=False, updated="2026-11-05T00:00:00Z")],
+        },
     }
 
-    assert [r["number"] for r in build_board(data)["reviewed"]] == [1, 2]
+    board = build_board(data)
+
+    # Rows needing action come first, newest update first within each group.
+    assert [(r["number"], r["reviewRequested"]) for r in board["reviewing"]] == [
+        (3, True),
+        (1, False),
+        (2, False),
+    ]
+    assert board["totals"]["reviewing"] == 6
 
 
 @pytest.mark.parametrize(("total", "truncated"), [(3, True), (2, False)])
@@ -204,6 +218,7 @@ def test_build_board_lists_non_archived_repos_and_truncation(total, truncated):
         },
         "authored": {"issueCount": 0, "nodes": []},
         "reviewed": {"issueCount": 0, "nodes": []},
+        "requested": {"issueCount": 0, "nodes": []},
     }
 
     board = build_board(data)
@@ -212,12 +227,12 @@ def test_build_board_lists_non_archived_repos_and_truncation(total, truncated):
     assert board["reposTruncated"] is truncated
 
 
-def test_build_unreviewed_passes_totals_through(monkeypatch):
+def test_build_others_passes_totals_through(monkeypatch):
     monkeypatch.setattr(
-        main, "fetch_unreviewed", lambda _repos: {"issueCount": 7, "nodes": []}
+        main, "fetch_others", lambda _repos: {"issueCount": 7, "nodes": []}
     )
 
-    payload = build_unreviewed({"repos": ["o/r"], "reposTruncated": True})
+    payload = build_others({"repos": ["o/r"], "reposTruncated": True})
 
     assert (payload["total"], payload["reposTruncated"], payload["rows"]) == (
         7,

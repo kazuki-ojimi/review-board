@@ -8,14 +8,14 @@ import github
 from github import (
     GitHubError,
     fetch_merged,
-    fetch_unreviewed,
-    unreviewed_search_query,
+    fetch_others,
+    others_search_query,
 )
 
 
 @pytest.mark.parametrize(
     "fetch",
-    [lambda: fetch_merged([], date(2026, 10, 27)), lambda: fetch_unreviewed([])],
+    [lambda: fetch_merged([], date(2026, 10, 27)), lambda: fetch_others([])],
 )
 def test_fetch_without_repos_returns_empty_without_calling_gh(monkeypatch, fetch):
     def fail(*_args, **_kwargs):
@@ -38,7 +38,7 @@ def graphql_calls(monkeypatch):
     return calls
 
 
-def test_fetch_activity_sends_both_searches(graphql_calls):
+def test_fetch_activity_sends_all_searches(graphql_calls):
     github.fetch_activity()
 
     assert graphql_calls == [
@@ -47,9 +47,11 @@ def test_fetch_activity_sends_both_searches(graphql_calls):
             {
                 "authored": "is:pr is:open author:@me sort:updated-desc",
                 "reviewed": "is:pr is:open reviewed-by:@me -author:@me sort:updated-desc",
+                "requested": "is:pr is:open review-requested:@me -reviewed-by:@me"
+                " -author:@me sort:updated-desc",
                 "limit": 50,
             },
-            {"viewer", "authored", "reviewed"},
+            {"viewer", "authored", "reviewed", "requested"},
         )
     ]
 
@@ -58,9 +60,12 @@ def test_fetch_activity_sends_both_searches(graphql_calls):
     ("fetch", "query_file", "query"),
     [
         (
-            lambda: fetch_unreviewed(["o/a"]),
+            lambda: fetch_others(["o/a"]),
             "open_prs.graphql",
-            "is:pr is:open -author:@me -reviewed-by:@me sort:updated-desc repo:o/a",
+            (
+                "is:pr is:open -author:@me -reviewed-by:@me -review-requested:@me"
+                " sort:updated-desc repo:o/a"
+            ),
         ),
         (
             lambda: fetch_merged(["o/a"], date(2026, 10, 27)),
@@ -74,15 +79,15 @@ def test_fetch_with_repos_returns_the_search(graphql_calls, fetch, query_file, q
     assert graphql_calls == [(query_file, {"q": query, "limit": 100}, {"search"})]
 
 
-def test_unreviewed_search_query_adds_repo_qualifiers():
-    query = unreviewed_search_query(["o/a", "o/b"])
+def test_others_search_query_adds_repo_qualifiers():
+    query = others_search_query(["o/a", "o/b"])
 
     assert query.endswith(" repo:o/a repo:o/b")
 
 
-def test_unreviewed_search_query_rejects_empty_repos():
+def test_others_search_query_rejects_empty_repos():
     with pytest.raises(ValueError, match="must not be empty"):
-        unreviewed_search_query([])
+        others_search_query([])
 
 
 def _completed(returncode=0, stdout="", stderr=""):

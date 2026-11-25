@@ -1,6 +1,11 @@
 # Kept separate from open_prs.graphql and merged_prs.graphql: nesting those
 # searches here exceeded GitHub's ~10 s GraphQL timeout (HTTP 502, measured 2026-11).
-query Activity($authored: String!, $reviewed: String!, $limit: Int!) {
+query Activity(
+  $authored: String!
+  $reviewed: String!
+  $requested: String!
+  $limit: Int!
+) {
   viewer {
     login
     repositoriesContributedTo(
@@ -22,6 +27,12 @@ query Activity($authored: String!, $reviewed: String!, $limit: Int!) {
     }
   }
   reviewed: search(query: $reviewed, type: ISSUE, first: $limit) {
+    issueCount
+    nodes {
+      ...PullRequestActivity
+    }
+  }
+  requested: search(query: $requested, type: ISSUE, first: $limit) {
     issueCount
     nodes {
       ...PullRequestActivity

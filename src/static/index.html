@@ -73,7 +73,7 @@
   <h1>Review Board</h1>
   <span class="meta" id="meta">読み込み中…</span>
   <button id="refresh" type="button">今すぐ更新</button>
-  <button id="open-unreviewed" type="button">未レビューのオープン PR<span id="unreviewed-total"></span></button>
+  <button id="open-others" type="button">担当外のオープン PR<span id="others-total"></span></button>
   <button id="open-merged" type="button">直近マージされた PR</button>
 </header>
 <div id="error"></div>
@@ -81,19 +81,19 @@
 <h2>自分が出した PR <span class="meta" id="authored-count"></span></h2>
 <div class="wrap" id="authored"></div>
 
-<h2>レビューした PR <span class="meta" id="reviewed-count"></span></h2>
+<h2>レビュー担当の PR <span class="meta" id="reviewing-count"></span></h2>
 <label class="meta toggle"><input type="checkbox" id="show-approved"> 自分が承認した PR も表示 (<span id="approved-count">0</span> 件)</label>
-<div class="wrap" id="reviewed"></div>
+<div class="wrap" id="reviewing"></div>
 
-<dialog id="unreviewed-dialog">
+<dialog id="others-dialog">
   <div class="dialog-head">
-    <h2>未レビューのオープン PR</h2>
-    <span class="meta" id="unreviewed-count"></span>
+    <h2>担当外のオープン PR</h2>
+    <span class="meta" id="others-count"></span>
     <button type="button" data-close>閉じる</button>
   </div>
   <div class="dialog-body">
-    <div class="meta">自分が貢献したリポジトリのオープン PR のうち、自分の PR・レビュー済みを除いたもの。最終コミット (無ければ作成) の新しい順で、下書きは最後</div>
-    <div class="wrap" id="unreviewed"></div>
+    <div class="meta">自分が貢献したリポジトリのオープン PR のうち、自分の PR・レビュー済み・レビュー依頼中を除いたもの。最終コミット (無ければ作成) の新しい順で、下書きは最後</div>
+    <div class="wrap" id="others"></div>
   </div>
 </dialog>
 
@@ -154,6 +154,7 @@ let lastBody = null;
 function statusCell(r, actionLabel, waitLabel) {
   if (r.isDraft) return '<span class="badge draft">下書き</span>';
   if (isApprovedByMe(r)) return '<span class="badge approved">承認済み</span>';
+  if (r.reviewRequested) return '<span class="badge action">レビュー依頼</span>';
   return isAction(r) ? `<span class="badge action">${actionLabel}</span>` : `<span class="badge wait">${waitLabel}</span>`;
 }
 
@@ -190,7 +191,7 @@ function renderAuthored(rows) {
     </tr>`));
 }
 
-function renderReviewed(rows) {
+function renderReviewing(rows) {
   return table(["状態", "PR", "作者", "返信", "自分のスレッド (解決済み/全体)", "判定 (自分 / PR 全体)", "更新"], rows.map(r => `
     <tr class="${rowClass(r)}">
       <td>${statusCell(r, "返信あり", "返信待ち")}</td>
@@ -203,7 +204,7 @@ function renderReviewed(rows) {
     </tr>`));
 }
 
-function renderUnreviewed(rows) {
+function renderOthers(rows) {
   return table(["状態", "PR", "作者", "最終コミット", "判定", "作成"], rows.map(r => `
     <tr class="${rowClass(r)}">
       <td>${statusCell(r, "", "未レビュー")}</td>
@@ -248,11 +249,11 @@ function renderMerged(rows) {
 
 // Lists shown in modals. Each is fetched only while its modal is opened.
 const MODALS = {
-  unreviewed: {
-    dialog: "unreviewed-dialog", path: "/api/unreviewed", target: "unreviewed", count: "unreviewed-count",
-    render: renderUnreviewed,
+  others: {
+    dialog: "others-dialog", path: "/api/others", target: "others", count: "others-count",
+    render: renderOthers,
     label: b => `${b.rows.length} 件`,
-    onLoad: b => { document.getElementById("unreviewed-total").textContent = ` (${b.total})`; },
+    onLoad: b => { document.getElementById("others-total").textContent = ` (${b.total})`; },
     last: null,
     pending: null,
   },
@@ -334,14 +335,14 @@ function countLabel(rows, total, fetched = rows.length) {
 
 function render() {
   const body = lastBody;
-  const approved = body.reviewed.filter(isApprovedByMe).length;
-  const reviewed = showApproved ? body.reviewed : body.reviewed.filter(r => !isApprovedByMe(r));
+  const approved = body.reviewing.filter(isApprovedByMe).length;
+  const reviewing = showApproved ? body.reviewing : body.reviewing.filter(r => !isApprovedByMe(r));
   document.getElementById("authored").innerHTML = renderAuthored(body.authored);
-  document.getElementById("reviewed").innerHTML = renderReviewed(reviewed);
+  document.getElementById("reviewing").innerHTML = renderReviewing(reviewing);
   document.getElementById("authored-count").innerHTML = countLabel(body.authored, body.totals.authored);
-  document.getElementById("reviewed-count").innerHTML = countLabel(reviewed, body.totals.reviewed, body.reviewed.length);
+  document.getElementById("reviewing-count").innerHTML = countLabel(reviewing, body.totals.reviewing, body.reviewing.length);
   document.getElementById("approved-count").textContent = approved;
-  const action = [...body.authored, ...body.reviewed].filter(isAction).length;
+  const action = [...body.authored, ...body.reviewing].filter(isAction).length;
   document.title = action ? `(${action}) Review Board` : "Review Board";
 }
 
@@ -393,7 +394,7 @@ document.getElementById("show-approved").addEventListener("change", e => {
   if (lastBody) render();
 });
 document.getElementById("open-merged").addEventListener("click", () => openModal(MODALS.merged));
-document.getElementById("open-unreviewed").addEventListener("click", () => openModal(MODALS.unreviewed));
+document.getElementById("open-others").addEventListener("click", () => openModal(MODALS.others));
 for (const button of document.querySelectorAll("[data-close]")) {
   button.addEventListener("click", () => button.closest("dialog").close());
 }

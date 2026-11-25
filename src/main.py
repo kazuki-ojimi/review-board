@@ -1,4 +1,4 @@
-"""Serve a local dashboard of the viewer's pull requests, the ones they reviewed, unreviewed ones and recently merged ones."""
+"""Serve a local dashboard of the viewer's pull requests, the ones they reviewed or are requested to review, other open ones and recently merged ones."""
 
 import argparse
 import json
@@ -15,13 +15,13 @@ from urllib.parse import parse_qs, urlparse
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from github import GitHubError, fetch_activity, fetch_merged, fetch_unreviewed
+from github import GitHubError, fetch_activity, fetch_merged, fetch_others
 from status import (
     pr_nodes,
     summarize_authored,
     summarize_merged,
-    summarize_reviewed,
-    summarize_unreviewed,
+    summarize_others,
+    summarize_reviewing,
 )
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -58,7 +58,11 @@ def build_board(data: dict[str, Any]) -> dict[str, Any]:
     """
     viewer = data["viewer"]["login"]
     authored = pr_nodes(data["authored"])
-    reviewed = pr_nodes(data["reviewed"])
+    reviewing = [summarize_reviewing(pr, viewer) for pr in pr_nodes(data["reviewed"])]
+    reviewing += [
+        summarize_reviewing(pr, viewer, requested=True)
+        for pr in pr_nodes(data["requested"])
+    ]
     contributed = data["viewer"]["repositoriesContributedTo"]
     return {
         "viewer": viewer,
@@ -68,25 +72,26 @@ def build_board(data: dict[str, Any]) -> dict[str, Any]:
         ],
         "reposTruncated": contributed["totalCount"] > len(contributed["nodes"]),
         "authored": _sort_rows([summarize_authored(pr, viewer) for pr in authored]),
-        "reviewed": _sort_rows([summarize_reviewed(pr, viewer) for pr in reviewed]),
+        "reviewing": _sort_rows(reviewing),
         "totals": {
             "authored": data["authored"]["issueCount"],
-            "reviewed": data["reviewed"]["issueCount"],
+            "reviewing": data["reviewed"]["issueCount"]
+            + data["requested"]["issueCount"],
         },
     }
 
 
-def build_unreviewed(board: dict[str, Any]) -> dict[str, Any]:
-    """Fetch open pull requests in the board's repositories that the viewer has neither opened nor reviewed.
+def build_others(board: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the pull requests of :func:`github.fetch_others` in the board's repositories.
 
     :param board: Payload of :func:`build_board`, for its repository list.
-    :return: The payload served at ``/api/unreviewed``.
+    :return: The payload served at ``/api/others``.
     :raises GitHubError: When fetching fails.
     """
-    search = fetch_unreviewed(board["repos"])
+    search = fetch_others(board["repos"])
     return {
         "fetchedAt": _now(),
-        "rows": summarize_unreviewed(search),
+        "rows": summarize_others(search),
         "total": search["issueCount"],
         "reposTruncated": board["reposTruncated"],
     }
@@ -150,7 +155,7 @@ class MemoryCache:
 def make_caches() -> dict[str, MemoryCache]:
     """Build one cache per API path.
 
-    The unreviewed and merged lists search the repositories of the cached board
+    The others and merged lists search the repositories of the cached board
     and do not refresh it.
 
     :return: Caches keyed by URL path.
@@ -158,9 +163,7 @@ def make_caches() -> dict[str, MemoryCache]:
     board = MemoryCache(lambda: build_board(fetch_activity()))
     return {
         "/api/prs": board,
-        "/api/unreviewed": MemoryCache(
-            lambda: build_unreviewed(board.get(force=False)[0])
-        ),
+        "/api/others": MemoryCache(lambda: build_others(board.get(force=False)[0])),
         "/api/merged": MemoryCache(
             lambda: build_merged(board.get(force=False)[0], datetime.now(UTC))
         ),

@@ -1,7 +1,7 @@
 [project]
 name = "review-board"
 version = "0.1.0"
-description = "Local dashboard of your pull requests, the ones you reviewed, unreviewed ones in repositories you contribute to, and recently merged ones."
+description = "Local dashboard of your pull requests, the ones you reviewed or are requested to review, other open ones in repositories you contribute to, and recently merged ones."
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = []

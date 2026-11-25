@@ -11,13 +11,25 @@ if TYPE_CHECKING:
 ACTIVITY_QUERY_PATH = Path(__file__).with_name("activity.graphql")
 OPEN_PRS_QUERY_PATH = Path(__file__).with_name("open_prs.graphql")
 MERGED_PRS_QUERY_PATH = Path(__file__).with_name("merged_prs.graphql")
+_AUTHORED = "author:@me"
+_REVIEWED = "reviewed-by:@me"
+_REQUESTED = "review-requested:@me"
+
 # Searches stop at their limit, so sort them to keep the most recent results.
-AUTHORED_QUERY = "is:pr is:open author:@me sort:updated-desc"
-REVIEWED_QUERY = "is:pr is:open reviewed-by:@me -author:@me sort:updated-desc"
-UNREVIEWED_QUERY = "is:pr is:open -author:@me -reviewed-by:@me sort:updated-desc"
+AUTHORED_QUERY = f"is:pr is:open {_AUTHORED} sort:updated-desc"
+REVIEWED_QUERY = f"is:pr is:open {_REVIEWED} -{_AUTHORED} sort:updated-desc"
+# Excludes reviewed ones so a re-requested pull request is not listed twice.
+REQUESTED_QUERY = (
+    f"is:pr is:open {_REQUESTED} -{_REVIEWED} -{_AUTHORED} sort:updated-desc"
+)
+# Everything AUTHORED_QUERY, REVIEWED_QUERY and REQUESTED_QUERY leave out.
+OTHERS_QUERY = (
+    f"is:pr is:open -{_AUTHORED} -{_REVIEWED} -{_REQUESTED} sort:updated-desc"
+)
 MERGED_QUERY = "is:pr is:merged sort:updated-desc"
+
 ACTIVITY_LIMIT = 50
-UNREVIEWED_LIMIT = 100
+OTHERS_LIMIT = 100
 MERGED_LIMIT = 100
 GH_TIMEOUT_SECONDS = 60
 
@@ -77,15 +89,15 @@ def _repo_search_query(base: str, repos: list[str]) -> str:
     return " ".join([base, *(f"repo:{r}" for r in repos)])
 
 
-def unreviewed_search_query(repos: list[str]) -> str:
-    """Build the search query for open pull requests the viewer has neither opened nor reviewed.
+def others_search_query(repos: list[str]) -> str:
+    """Build the search query for open pull requests the viewer has not opened, reviewed or been requested to review.
 
     :param repos: ``owner/name`` of repositories to search; must not be empty,
         because a search without ``repo:`` qualifiers covers all of GitHub.
     :return: The search string.
     :raises ValueError: When ``repos`` is empty.
     """
-    return _repo_search_query(UNREVIEWED_QUERY, repos)
+    return _repo_search_query(OTHERS_QUERY, repos)
 
 
 def merged_search_query(repos: list[str], since: date) -> str:
@@ -121,8 +133,8 @@ def fetch_merged(repos: list[str], since: date) -> dict[str, Any]:
     )["search"]
 
 
-def fetch_unreviewed(repos: list[str]) -> dict[str, Any]:
-    """Fetch open pull requests in ``repos`` the viewer has neither opened nor reviewed.
+def fetch_others(repos: list[str]) -> dict[str, Any]:
+    """Fetch open pull requests in ``repos`` the viewer has not opened, reviewed or been requested to review.
 
     :param repos: ``owner/name`` of repositories to search.
     :return: The ``search`` object of ``open_prs.graphql``; an empty result
@@ -133,13 +145,13 @@ def fetch_unreviewed(repos: list[str]) -> dict[str, Any]:
         return _empty_search()
     return _graphql(
         OPEN_PRS_QUERY_PATH,
-        {"q": unreviewed_search_query(repos), "limit": UNREVIEWED_LIMIT},
+        {"q": others_search_query(repos), "limit": OTHERS_LIMIT},
         {"search"},
     )["search"]
 
 
 def fetch_activity() -> dict[str, Any]:
-    """Fetch the viewer's own and reviewed pull requests.
+    """Fetch the viewer's own pull requests, reviewed ones and ones awaiting their review.
 
     :return: The ``data`` object of ``activity.graphql``.
     :raises GitHubError: When the query fails (see :class:`GitHubError`).
@@ -149,7 +161,8 @@ def fetch_activity() -> dict[str, Any]:
         {
             "authored": AUTHORED_QUERY,
             "reviewed": REVIEWED_QUERY,
+            "requested": REQUESTED_QUERY,
             "limit": ACTIVITY_LIMIT,
         },
-        {"viewer", "authored", "reviewed"},
+        {"viewer", "authored", "reviewed", "requested"},
     )

@@ -191,14 +191,14 @@ def summarize_authored(pr: dict[str, Any], viewer: str) -> dict[str, Any]:
     }
 
 
-def summarize_unreviewed(search: dict[str, Any]) -> list[dict[str, Any]]:
-    """Turn the unreviewed open pull request search into rows.
+def summarize_others(search: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turn the search of :func:`github.fetch_others` into rows.
 
     Rows are ordered by the latest commit time (creation time when there is no
     commit), newest first, with drafts after everything else.
 
     :param search: The ``search`` object of ``open_prs.graphql``.
-    :return: Rows for the "unreviewed open pull requests" table.
+    :return: Rows for the "other open pull requests" table.
     :raises ValueError: When a pull request in ``search`` lacks its ``commits`` field.
     """
     rows = []
@@ -257,8 +257,10 @@ def my_decision(pr: dict[str, Any], viewer: str) -> str | None:
     return max(decisions, key=lambda r: _parse_time(r["submittedAt"]))["state"]
 
 
-def summarize_reviewed(pr: dict[str, Any], viewer: str) -> dict[str, Any]:
-    """Summarize a pull request the viewer has reviewed.
+def summarize_reviewing(
+    pr: dict[str, Any], viewer: str, *, requested: bool = False
+) -> dict[str, Any]:
+    """Summarize a pull request the viewer has reviewed or is requested to review.
 
     A reply is a comment, review or thread comment by the pull request author,
     or a commit by anyone other than the viewer, after the viewer's latest
@@ -266,12 +268,15 @@ def summarize_reviewed(pr: dict[str, Any], viewer: str) -> dict[str, Any]:
     acknowledged.
     Comments by other reviewers and comments in resolved threads are not
     treated as replies. When the author's account is deleted, only commits count.
-    It needs action when there is a reply, unless it is a draft or the viewer's
-    latest decision is an approval.
+    It needs action when there is a reply or the viewer's review is requested,
+    unless it is a draft or the viewer's latest decision is an approval.
 
     :param pr: A ``PullRequestActivity`` node.
     :param viewer: Login of the current user.
-    :return: A row for the "reviewed pull requests" table.
+    :param requested: The pull request awaits the viewer's review and has none
+        from them yet.
+    :return: A row for the table of pull requests the viewer reviewed or is
+        requested to review.
     :raises ValueError: When a requested connection field is missing from ``pr``.
     """
     author = _login(pr["author"])
@@ -300,5 +305,8 @@ def summarize_reviewed(pr: dict[str, Any], viewer: str) -> dict[str, Any]:
         "myDecision": decision,
         "myThreads": len(my_threads),
         "myThreadsResolved": sum(1 for t in my_threads if t["isResolved"]),
-        "needsAction": bool(replies) and not pr["isDraft"] and decision != "APPROVED",
+        "reviewRequested": requested,
+        "needsAction": (bool(replies) or requested)
+        and not pr["isDraft"]
+        and decision != "APPROVED",
     }
