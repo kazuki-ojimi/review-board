@@ -81,6 +81,8 @@ scripts/launch-agent.sh --help     # 使い方を表示
 
 `~/Library/LaunchAgents/local.review-board.plist` を作り、ログイン時に起動、落ちたら再起動する。実行時の `uv` と `gh` の場所を plist に書き込むので、どちらかを入れ直して場所が変わったら `install` をやり直す。リポジトリを移動したときも同じ。ログは `~/Library/Logs/review-board.log`。
 
+サーバーは Python のコードを起動時に読み込み、`src/*.graphql` は取得のたびに読み直す。コードを変えたら `launchctl kickstart -k gui/$(id -u)/local.review-board` (または `install` の再実行) で再起動する。再起動しないと、新しいクエリと古いコードの組み合わせで取得が失敗することがある。
+
 ### アプリとして Dock に置く (Chrome)
 
 1. Chrome で `http://127.0.0.1:8765/` を開く
