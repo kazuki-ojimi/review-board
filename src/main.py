@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import webbrowser
+from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,7 +16,13 @@ from urllib.parse import parse_qs, urlparse
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from github import GitHubError, fetch_activity, fetch_merged, fetch_others
+from github import (
+    GitHubError,
+    fetch_activity,
+    fetch_contributed_repos,
+    fetch_merged,
+    fetch_others,
+)
 from status import (
     pr_nodes,
     summarize_authored,
@@ -53,8 +60,7 @@ def build_board(data: dict[str, Any]) -> dict[str, Any]:
     """Turn the GraphQL ``data`` object into the payload served at ``/api/prs``.
 
     :param data: Return value of :func:`github.fetch_activity`.
-    :return: Rows for both tables, counts used to detect truncated searches, and
-        the repositories the other lists search.
+    :return: Rows for both tables and counts used to detect truncated searches.
     """
     viewer = data["viewer"]["login"]
     authored = pr_nodes(data["authored"])
@@ -63,14 +69,9 @@ def build_board(data: dict[str, Any]) -> dict[str, Any]:
         summarize_reviewing(pr, viewer, requested=True)
         for pr in pr_nodes(data["requested"])
     ]
-    contributed = data["viewer"]["repositoriesContributedTo"]
     return {
         "viewer": viewer,
         "fetchedAt": _now(),
-        "repos": [
-            r["nameWithOwner"] for r in contributed["nodes"] if not r["isArchived"]
-        ],
-        "reposTruncated": contributed["totalCount"] > len(contributed["nodes"]),
         "authored": _sort_rows([summarize_authored(pr, viewer) for pr in authored]),
         "reviewing": _sort_rows(reviewing),
         "totals": {
@@ -81,33 +82,57 @@ def build_board(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_others(board: dict[str, Any]) -> dict[str, Any]:
-    """Fetch the pull requests of :func:`github.fetch_others` in the board's repositories.
+@dataclass(frozen=True)
+class Scope:
+    """Repositories the modal lists search.
 
-    :param board: Payload of :func:`build_board`, for its repository list.
+    ``truncated`` is true when GitHub returned only part of the viewer's
+    contributed repositories.
+    """
+
+    repos: list[str]
+    truncated: bool
+
+
+def build_scope(contributed: dict[str, Any]) -> Scope:
+    """Pick the repositories the modal lists search.
+
+    :param contributed: Return value of :func:`github.fetch_contributed_repos`.
+    :return: Non-archived repository names and whether the list was cut off.
+    """
+    return Scope(
+        repos=[r["nameWithOwner"] for r in contributed["nodes"] if not r["isArchived"]],
+        truncated=contributed["totalCount"] > len(contributed["nodes"]),
+    )
+
+
+def build_others(scope: Scope) -> dict[str, Any]:
+    """Fetch the pull requests of :func:`github.fetch_others` in the scope's repositories.
+
+    :param scope: Return value of :func:`build_scope`.
     :return: The payload served at ``/api/others``.
     :raises GitHubError: When fetching fails.
     """
-    search = fetch_others(board["repos"])
+    search = fetch_others(scope.repos)
     return {
         "fetchedAt": _now(),
         "rows": summarize_others(search),
         "total": search["issueCount"],
-        "reposTruncated": board["reposTruncated"],
+        "reposTruncated": scope.truncated,
     }
 
 
-def build_merged(board: dict[str, Any], now: datetime) -> dict[str, Any]:
+def build_merged(scope: Scope, now: datetime) -> dict[str, Any]:
     """Fetch pull requests merged in the last :data:`MERGED_DAYS` days.
 
-    :param board: Payload of :func:`build_board`, for its repository list.
+    :param scope: Return value of :func:`build_scope`.
     :param now: Current time (UTC); the window starts at the beginning of the UTC
         date ``MERGED_DAYS`` days before it.
     :return: The payload served at ``/api/merged``.
     :raises GitHubError: When fetching fails.
     """
     since = (now - timedelta(days=MERGED_DAYS)).date()
-    search = fetch_merged(board["repos"], since)
+    search = fetch_merged(scope.repos, since)
     return {
         "fetchedAt": now.isoformat(),
         # The exact start of the window, so the page does not have to know it is UTC.
@@ -115,7 +140,7 @@ def build_merged(board: dict[str, Any], now: datetime) -> dict[str, Any]:
         "days": MERGED_DAYS,
         "rows": summarize_merged(search),
         "total": search["issueCount"],
-        "reposTruncated": board["reposTruncated"],
+        "reposTruncated": scope.truncated,
     }
 
 
@@ -155,17 +180,20 @@ class MemoryCache:
 def make_caches() -> dict[str, MemoryCache]:
     """Build one cache per API path.
 
-    The others and merged lists search the repositories of the cached board
-    and do not refresh it.
+    The modal lists fetch the repositories to search each time they are built,
+    so the board, refreshed every few minutes, does not pay for that lookup.
 
     :return: Caches keyed by URL path.
     """
-    board = MemoryCache(lambda: build_board(fetch_activity()))
     return {
-        "/api/prs": board,
-        "/api/others": MemoryCache(lambda: build_others(board.get(force=False)[0])),
+        "/api/prs": MemoryCache(lambda: build_board(fetch_activity())),
+        "/api/others": MemoryCache(
+            lambda: build_others(build_scope(fetch_contributed_repos()))
+        ),
         "/api/merged": MemoryCache(
-            lambda: build_merged(board.get(force=False)[0], datetime.now(UTC))
+            lambda: build_merged(
+                build_scope(fetch_contributed_repos()), datetime.now(UTC)
+            )
         ),
     }
 

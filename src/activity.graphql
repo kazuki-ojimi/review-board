@@ -1,5 +1,8 @@
 # Kept separate from open_prs.graphql and merged_prs.graphql: nesting those
 # searches here exceeded GitHub's ~10 s GraphQL timeout (HTTP 502, measured 2026-11).
+# Does not include the contributed repositories (contributed_repos.graphql): that
+# lookup took 1-2 s on its own for an account with 41 of them (measured 2026-11-25;
+# remeasure if the count grows by an order of magnitude).
 query Activity(
   $authored: String!
   $reviewed: String!
@@ -8,17 +11,6 @@ query Activity(
 ) {
   viewer {
     login
-    repositoriesContributedTo(
-      first: 100
-      includeUserRepositories: true
-      contributionTypes: [COMMIT, ISSUE, PULL_REQUEST, PULL_REQUEST_REVIEW]
-    ) {
-      totalCount
-      nodes {
-        nameWithOwner
-        isArchived
-      }
-    }
   }
   authored: search(query: $authored, type: ISSUE, first: $limit) {
     issueCount

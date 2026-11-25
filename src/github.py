@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 ACTIVITY_QUERY_PATH = Path(__file__).with_name("activity.graphql")
 OPEN_PRS_QUERY_PATH = Path(__file__).with_name("open_prs.graphql")
 MERGED_PRS_QUERY_PATH = Path(__file__).with_name("merged_prs.graphql")
+CONTRIBUTED_REPOS_QUERY_PATH = Path(__file__).with_name("contributed_repos.graphql")
 _AUTHORED = "author:@me"
 _REVIEWED = "reviewed-by:@me"
 _REQUESTED = "review-requested:@me"
@@ -148,6 +149,17 @@ def fetch_others(repos: list[str]) -> dict[str, Any]:
         {"q": others_search_query(repos), "limit": OTHERS_LIMIT},
         {"search"},
     )["search"]
+
+
+def fetch_contributed_repos() -> dict[str, Any]:
+    """Fetch the repositories the viewer has contributed to.
+
+    :return: The ``repositoriesContributedTo`` object of ``contributed_repos.graphql``.
+    :raises GitHubError: When the query fails (see :class:`GitHubError`).
+    """
+    return _graphql(CONTRIBUTED_REPOS_QUERY_PATH, {}, {"viewer"})["viewer"][
+        "repositoriesContributedTo"
+    ]
 
 
 def fetch_activity() -> dict[str, Any]:

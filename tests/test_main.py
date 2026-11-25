@@ -11,9 +11,11 @@ import main
 from github import GitHubError
 from main import (
     MemoryCache,
+    Scope,
     build_board,
     build_merged,
     build_others,
+    build_scope,
     make_caches,
     make_handler,
 )
@@ -35,13 +37,20 @@ def test_memory_cache_fetches_only_when_empty_or_forced():
 
 
 @pytest.mark.parametrize("path", ["/api/others", "/api/merged"])
-def test_refreshing_a_modal_list_reuses_the_cached_board(monkeypatch, path):
+def test_refreshing_a_modal_list_fetches_repos_but_not_the_board(monkeypatch, path):
     board_fetches = []
     monkeypatch.setattr(main, "fetch_activity", lambda: board_fetches.append(1) or {})
+    repo_fetches = []
     monkeypatch.setattr(
         main,
-        "build_board",
-        lambda _data: {"repos": ["o/r"], "reposTruncated": False},
+        "fetch_contributed_repos",
+        lambda: (
+            repo_fetches.append(1)
+            or {
+                "totalCount": 1,
+                "nodes": [{"nameWithOwner": "o/r", "isArchived": False}],
+            }
+        ),
     )
     searched = []
     empty = {"issueCount": 0, "nodes": []}
@@ -56,7 +65,7 @@ def test_refreshing_a_modal_list_reuses_the_cached_board(monkeypatch, path):
     caches[path].get(force=True)
     caches[path].get(force=True)
 
-    assert len(board_fetches) == 1
+    assert (len(board_fetches), len(repo_fetches)) == (0, 2)
     assert searched == [["o/r"], ["o/r"]]
 
 
@@ -89,7 +98,7 @@ def test_build_merged_searches_from_the_utc_date_fourteen_days_before(monkeypatc
 
     # `now` is UTC; the window starts at 00:00 UTC of the date 14 days earlier.
     merged = build_merged(
-        {"repos": ["o/r"], "reposTruncated": True},
+        Scope(repos=["o/r"], truncated=True),
         datetime(2026, 11, 13, 20, 0, tzinfo=UTC),
     )
 
@@ -132,10 +141,7 @@ def _pr(number, *, needs_action, updated, draft=False):
 
 def test_build_board_sorts_action_first_and_drafts_last():
     data = {
-        "viewer": {
-            "login": "me",
-            "repositoriesContributedTo": {"totalCount": 0, "nodes": []},
-        },
+        "viewer": {"login": "me"},
         "authored": {
             "issueCount": 5,
             "nodes": [
@@ -157,7 +163,6 @@ def test_build_board_sorts_action_first_and_drafts_last():
     # stay below #1 even though they were updated later.
     assert [r["number"] for r in board["authored"]] == [3, 2, 1, 5, 4]
     assert board["totals"] == {"authored": 5, "reviewing": 0}
-    assert board["reposTruncated"] is False
 
 
 def test_build_board_merges_reviewed_and_requested_rows_and_sorts_them(monkeypatch):
@@ -173,10 +178,7 @@ def test_build_board_merges_reviewed_and_requested_rows_and_sorts_them(monkeypat
         },
     )
     data = {
-        "viewer": {
-            "login": "me",
-            "repositoriesContributedTo": {"totalCount": 0, "nodes": []},
-        },
+        "viewer": {"login": "me"},
         "authored": {"issueCount": 0, "nodes": []},
         "reviewed": {
             "issueCount": 2,
@@ -204,27 +206,18 @@ def test_build_board_merges_reviewed_and_requested_rows_and_sorts_them(monkeypat
 
 
 @pytest.mark.parametrize(("total", "truncated"), [(3, True), (2, False)])
-def test_build_board_lists_non_archived_repos_and_truncation(total, truncated):
-    data = {
-        "viewer": {
-            "login": "me",
-            "repositoriesContributedTo": {
-                "totalCount": total,
-                "nodes": [
-                    {"nameWithOwner": "o/a", "isArchived": False},
-                    {"nameWithOwner": "o/b", "isArchived": True},
-                ],
-            },
-        },
-        "authored": {"issueCount": 0, "nodes": []},
-        "reviewed": {"issueCount": 0, "nodes": []},
-        "requested": {"issueCount": 0, "nodes": []},
-    }
+def test_build_scope_lists_non_archived_repos_and_truncation(total, truncated):
+    scope = build_scope(
+        {
+            "totalCount": total,
+            "nodes": [
+                {"nameWithOwner": "o/a", "isArchived": False},
+                {"nameWithOwner": "o/b", "isArchived": True},
+            ],
+        }
+    )
 
-    board = build_board(data)
-
-    assert board["repos"] == ["o/a"]
-    assert board["reposTruncated"] is truncated
+    assert scope == Scope(repos=["o/a"], truncated=truncated)
 
 
 def test_build_others_passes_totals_through(monkeypatch):
@@ -232,7 +225,7 @@ def test_build_others_passes_totals_through(monkeypatch):
         main, "fetch_others", lambda _repos: {"issueCount": 7, "nodes": []}
     )
 
-    payload = build_others({"repos": ["o/r"], "reposTruncated": True})
+    payload = build_others(Scope(repos=["o/r"], truncated=True))
 
     assert (payload["total"], payload["reposTruncated"], payload["rows"]) == (
         7,

@@ -38,6 +38,20 @@ def graphql_calls(monkeypatch):
     return calls
 
 
+def test_fetch_contributed_repos_returns_the_connection(monkeypatch):
+    calls = []
+    contributed = {"totalCount": 0, "nodes": []}
+
+    def fake(query_path, variables, required):
+        calls.append((query_path.name, variables, required))
+        return {"viewer": {"repositoriesContributedTo": contributed}}
+
+    monkeypatch.setattr(github, "_graphql", fake)
+
+    assert github.fetch_contributed_repos() == contributed
+    assert calls == [("contributed_repos.graphql", {}, {"viewer"})]
+
+
 def test_fetch_activity_sends_all_searches(graphql_calls):
     github.fetch_activity()
 
